@@ -86,8 +86,7 @@ namespace ClaudeVPNGuard
             var user = StripBlock(existing ?? "");
             user = user.Replace("function main(", "function cvgUserMain(");
             if (!user.Contains("function cvgUserMain(")) user += "\nfunction cvgUserMain(config, profileName) { return config; }\n";
-            return user.TrimEnd() + "\n\n" + BuildBlock(st) +
-                "function main(config, profileName) { return cvgApply(cvgUserMain(config, profileName)); }\n";
+            return user.TrimEnd() + "\n\n" + BuildBlock(st) + MainWrapper + "\n";
         }
 
         public static string StripBlock(string s)
@@ -125,6 +124,119 @@ namespace ClaudeVPNGuard
             File.WriteAllText(file, Compose(old, st), new UTF8Encoding(false));
             Log.Action("已写入 Clash Verge 全局扩展脚本（Japan Auto + 专用入口），备份：" + backup);
             return backup;
+        }
+
+        public const string MainWrapper = "function main(config, profileName) { return cvgApply(cvgUserMain(config, profileName)); }";
+
+        // 用户找覆写时容易看错地方：本程序写的是「全局扩展脚本」，不是「全局扩展覆写配置」(Merge)
+        public const string WhereGuide = "本程序的覆写写在 Clash Verge →「订阅」页 →「全局扩展脚本」(Script.js) 里，段首是 “ClaudeVPNGuard:BEGIN”；不在「全局扩展覆写配置」(Merge)。";
+        public const string RefreshGuide = "请打开 Clash Verge →「订阅」→ 在当前使用的订阅上右键「刷新」（或重启 Clash Verge），Clash 重新生成配置后 Japan Auto 组和专用入口 127.0.0.1:17897 才会出现。刷新会短暂中断代理；在此之前 Claude 保持断网，不会直连。";
+
+        public static string ScriptFile(string vergeDir) { return Path.Combine(vergeDir, "profiles", "Script.js"); }
+
+        // 脚本里有与当前设置一致的本程序段（含 main 包装）
+        public static bool HasCurrentBlock(string script, GuardSettings st)
+        {
+            var s = (script ?? "").Replace("\r", "");
+            return s.Contains(BuildBlock(st).Replace("\r", "")) && s.Contains(MainWrapper);
+        }
+
+        // 覆写段缺失或与当前设置不一致时重新写入（先备份）；已正确返回 null，否则返回备份路径
+        public static string Ensure(string vergeDir, GuardSettings st)
+        {
+            var file = ScriptFile(vergeDir);
+            if (File.Exists(file) && HasCurrentBlock(File.ReadAllText(file, Encoding.UTF8), st)) return null;
+            return Apply(vergeDir, st);
+        }
+
+        // Clash Verge 生成的运行配置（clash-verge.yaml）是否已套用当前脚本：含专用入口，且生成时间不早于脚本
+        public static bool RuntimeLoaded(string vergeDir)
+        {
+            var rt = Path.Combine(vergeDir, "clash-verge.yaml");
+            var sc = ScriptFile(vergeDir);
+            if (!File.Exists(rt) || !File.Exists(sc)) return false;
+            return File.ReadAllText(rt, Encoding.UTF8).Contains(ListenerName) && File.GetLastWriteTimeUtc(rt) >= File.GetLastWriteTimeUtc(sc);
+        }
+
+        // ── 自动套用：Verge 只在刷新/更新订阅时执行脚本；脚本刚补写、Clash 还没重新生成时，
+        // 保护器自己对 Verge 当前运行配置做与 cvgApply 相同的改动，再让内核重载（PUT /configs payload）。
+        // 之后 Verge 再生成配置时会执行 Script.js，结果一致。只做加法：新增 provider/组/入口，规则最前插入。
+        static readonly System.Text.RegularExpressions.Regex TopKey = new System.Text.RegularExpressions.Regex(@"^([A-Za-z0-9_-]+):(.*)$");
+
+        static int FindTopKey(List<string> lines, string key, out string rest)
+        {
+            rest = null;
+            for (int i = 0; i < lines.Count; i++)
+            {
+                var m = TopKey.Match(lines[i]);
+                if (m.Success && m.Groups[1].Value == key) { rest = m.Groups[2].Value.Trim(); return i; }
+            }
+            return -1;
+        }
+
+        // 在顶层 key 下插入条目；items 为不带缩进的行（"- {...}" 或 "name: {...}"），按下一行的缩进对齐
+        static void InsertUnder(List<string> lines, string key, List<string> items, string emptyFlow, bool isList)
+        {
+            string rest;
+            int i = FindTopKey(lines, key, out rest);
+            if (i < 0) { lines.Add(key + ":"); lines.AddRange(items.Select(x => (isList ? "" : "  ") + x)); return; }
+            if (rest == emptyFlow || rest == "" && (i + 1 >= lines.Count || TopKey.IsMatch(lines[i + 1])))
+            {
+                lines[i] = key + ":";
+                lines.InsertRange(i + 1, items.Select(x => (isList ? "" : "  ") + x));
+                return;
+            }
+            if (rest != "" && !rest.StartsWith("#")) throw new InvalidOperationException("运行配置中 " + key + " 为行内写法，不支持自动套用");
+            var next = lines[i + 1];
+            var indent = next.Substring(0, next.Length - next.TrimStart().Length);
+            lines.InsertRange(i + 1, items.Select(x => indent + x));
+        }
+
+        // 返回套用后的 YAML；已含专用入口返回 null
+        public static string PatchRuntimeYaml(string yaml, GuardSettings st)
+        {
+            if (yaml == null) throw new ArgumentNullException("yaml");
+            if (yaml.Contains(ListenerName)) return null;
+            var nl = yaml.Contains("\r\n") ? "\r\n" : "\n";
+            var lines = yaml.Replace("\r\n", "\n").Split('\n').ToList();
+            while (lines.Count > 0 && lines[lines.Count - 1] == "") lines.RemoveAt(lines.Count - 1);
+            var q = (Func<string, string>)JsStr; // JSON 风格双引号串即合法 YAML 双引号串
+            var gname = q(st.JapanGroupName);
+            if (System.Text.RegularExpressions.Regex.IsMatch(yaml, @"(?m)^\s*-?\s*name:\s*(" + System.Text.RegularExpressions.Regex.Escape(st.JapanGroupName) + "|" + System.Text.RegularExpressions.Regex.Escape(gname) + @")\s*$"))
+                throw new InvalidOperationException("运行配置里已有同名组 " + st.JapanGroupName + "，不自动套用");
+            InsertUnder(lines, "proxy-providers", new List<string> { q(Subscriptions.ProviderName) + ": {type: file, path: " + q("./" + Subscriptions.ProviderFile) + "}" }, "{}", false);
+            InsertUnder(lines, "proxy-groups", new List<string> { "- {name: " + gname + ", type: select, use: [" + q(Subscriptions.ProviderName) + "]}" }, "[]", true);
+            InsertUnder(lines, "listeners", new List<string> { "- {name: " + q(ListenerName) + ", type: mixed, listen: \"127.0.0.1\", port: " + st.DedicatedPort + ", udp: true, proxy: " + gname + "}" }, "[]", true);
+            var pre = new List<string> { "- " + q("PROCESS-NAME-REGEX,(?i)^claude\\.exe$," + st.JapanGroupName) };
+            pre.AddRange(st.ClaudeDomains.Select(d => "- " + q("DOMAIN-SUFFIX," + d + "," + st.JapanGroupName)));
+            InsertUnder(lines, "rules", pre, "[]", true);
+            return string.Join(nl, lines) + nl;
+        }
+
+        public static string RuntimeFile(string vergeDir) { return Path.Combine(vergeDir, "clash-verge.yaml"); }
+
+        // 对运行配置套用并让内核重载；已套用返回 false。会短暂断开 Clash 现有连接。
+        public static bool HotLoad(string vergeDir, GuardSettings st, MihomoClient c)
+        {
+            var rt = RuntimeFile(vergeDir);
+            if (!File.Exists(rt)) throw new FileNotFoundException("没有 Clash Verge 运行配置 clash-verge.yaml");
+            var patched = PatchRuntimeYaml(File.ReadAllText(rt, Encoding.UTF8), st);
+            if (patched == null) return false;
+            if (c == null) throw new InvalidOperationException("Clash 内核控制接口不可用");
+            var saved = c.TimeoutMs;
+            try
+            {
+                c.TimeoutMs = Math.Max(saved, 10000);
+                var r = c.Request("PUT", "/configs?force=true", Json.Serialize(new Dictionary<string, object> { { "path", "" }, { "payload", patched } }));
+                if (r.Status != 204 && r.Status != 200) throw new IOException("内核重载配置失败 HTTP " + r.Status + " " + r.Body);
+            }
+            finally { c.TimeoutMs = saved; }
+            // 写回运行配置，状态判断与 Verge 下次直接重载都以它为准（Verge 重新生成时会覆盖，结果相同）
+            var tmp = rt + ".cvg-tmp";
+            File.WriteAllText(tmp, patched, new UTF8Encoding(false));
+            File.Replace(tmp, rt, null);
+            Log.Action("已自动把覆写套用到 Clash 当前配置并重载内核（Japan Auto + 专用入口 " + st.DedicatedPort + "），无需在 Clash Verge 手动刷新");
+            return true;
         }
 
         public static string LatestBackup(string vergeDir)

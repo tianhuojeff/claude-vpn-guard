@@ -196,7 +196,7 @@ namespace ClaudeVPNGuard
             try { members = api.GroupMembers(st.JapanGroupName); } catch { }
             if (members == null)
             {
-                r.Add("jpgroup", st.JapanGroupName + " 组", false, true, "不存在（请在 Clash Verge 应用覆写脚本并刷新配置）");
+                r.Add("jpgroup", st.JapanGroupName + " 组", false, true, "不存在：Clash 当前配置没有套用本程序的覆写（保护器会自动补写全局扩展脚本；请在 Clash Verge →「订阅」右键当前订阅「刷新」）");
             }
             else
             {

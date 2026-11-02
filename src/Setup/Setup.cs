@@ -62,7 +62,7 @@ namespace ClaudeVPNGuard
 
         public SetupForm()
         {
-            Text = "Claude VPN Guard 安装与验收";
+            Text = "Claude VPN Guard v" + GuardVersion.Text + " 安装与验收";
             Font = new Font("Microsoft YaHei UI", 9F);
             Size = new Size(1000, 700);
             StartPosition = FormStartPosition.CenterScreen;
@@ -242,14 +242,33 @@ namespace ClaudeVPNGuard
             {
                 Rec(""); Rec("## 3. Clash 覆写（Japan Auto + 专用入口）");
                 string o;
+                // 只看专用入口在线不够：Clash 可能还在用旧配置，脚本段其实已丢（11-02 卸载后重装即如此，更新订阅后 Japan Auto 消失）
+                var vd = VergeOverride.FindVergeDataDir();
+                if (vd == null) { State(3, "未找到 Clash Verge", Color.DarkOrange); Rec("- 未找到 Clash Verge 数据目录"); return; }
+                var sf = VergeOverride.ScriptFile(vd);
+                if (!(File.Exists(sf) && VergeOverride.HasCurrentBlock(File.ReadAllText(sf, Encoding.UTF8), GuardSettings.Load())))
+                {
+                    bool go = false;
+                    Ui(() => go = Confirm("写入 Clash 覆写", "Clash Verge「全局扩展脚本」(Script.js) 里没有本程序段（或与当前设置不一致）。\n\n将写入：Japan Auto 组 + 专用入口 127.0.0.1:17897 + Claude 规则；不改其他组/节点/规则。写入前自动备份原文件。\n\n" + VergeOverride.WhereGuide));
+                    if (!go) { State(3, "未写入覆写", Color.DarkOrange); Rec("- 用户取消写入覆写"); return; }
+                    Run(Svc(), "verge-apply", out o);
+                    Rec("- " + o.Trim());
+                }
                 Run(Svc(), "verge-diff", out o);
-                listenerOk = ListenerUp();
+                listenerOk = ListenerUp() && VergeOverride.RuntimeLoaded(vd);
+                if (!listenerOk)
+                {
+                    // 不用用户去 Verge 刷新：保护器自己把覆写套进当前配置并重载内核（会短暂断开 Clash 现有连接）
+                    Run(Svc(), "verge-hotload", out o);
+                    Rec("- " + o.Trim());
+                    for (int i = 0; i < 10 && !listenerOk; i++) { Thread.Sleep(500); listenerOk = ListenerUp() && VergeOverride.RuntimeLoaded(vd); }
+                }
                 while (!listenerOk)
                 {
                     var r = DialogResult.None;
-                    Ui(() => r = MessageBox.Show(this, "覆写已写入 Script.js（差异见右侧），但 Clash Verge 尚未加载。\n\n请在 Clash Verge 中：订阅 → 当前订阅 → 刷新（或重启 Clash Verge），会短暂中断代理。\n\n【是】我已刷新，重新检测\n【否】撤销覆写（恢复原 Script.js）并停止\n【取消】稍后再说", "加载 Clash 覆写", MessageBoxButtons.YesNoCancel, MessageBoxIcon.Question));
+                    Ui(() => r = MessageBox.Show(this, "覆写已写入 Script.js（差异见右侧），自动套用也没成功（见右侧记录），Clash Verge 当前配置还没套用它。\n\n" + VergeOverride.RefreshGuide + "\n\n【是】我已刷新，重新检测\n【否】撤销覆写（恢复原 Script.js）并停止\n【取消】稍后再说", "加载 Clash 覆写", MessageBoxButtons.YesNoCancel, MessageBoxIcon.Question));
                     while (r == DialogResult.None) Thread.Sleep(100);
-                    if (r == DialogResult.Yes) { Thread.Sleep(1500); listenerOk = ListenerUp(); continue; }
+                    if (r == DialogResult.Yes) { Thread.Sleep(1500); listenerOk = ListenerUp() && VergeOverride.RuntimeLoaded(vd); continue; }
                     if (r == DialogResult.No) { Run(Svc(), "verge-restore", out o); Rec("- 用户撤销覆写：" + o.Trim()); }
                     State(3, "覆写未生效，已停止", Color.DarkOrange);
                     Rec("- 专用入口未生效，验收停止");

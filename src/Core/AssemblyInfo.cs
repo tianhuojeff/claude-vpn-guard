@@ -6,5 +6,16 @@ using System.Runtime.Versioning;
 [assembly: TargetFramework(".NETFramework,Version=v4.8", FrameworkDisplayName = ".NET Framework 4.8")]
 [assembly: AssemblyProduct("Claude VPN Guard")]
 [assembly: AssemblyCompany("tianhuojeff")]
-[assembly: AssemblyVersion("1.0.0.0")]
-[assembly: AssemblyFileVersion("1.0.0.0")]
+[assembly: AssemblyVersion(ClaudeVPNGuard.GuardVersion.Full)]
+[assembly: AssemblyFileVersion(ClaudeVPNGuard.GuardVersion.Full)]
+[assembly: AssemblyInformationalVersion(ClaudeVPNGuard.GuardVersion.Text)]
+
+namespace ClaudeVPNGuard
+{
+    // 版本号唯一来源；每次发布同步更新 CHANGELOG.md
+    public static class GuardVersion
+    {
+        public const string Text = "2.3.0";
+        public const string Full = Text + ".0";
+    }
+}

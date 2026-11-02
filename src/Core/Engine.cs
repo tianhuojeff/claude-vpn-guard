@@ -42,6 +42,9 @@ namespace ClaudeVPNGuard
         public string ResumeId;        // 待恢复清单 ID（无则为 null）
         public int ResumeSessions;     // 清单中的会话数
         public bool AutoResume;        // 恢复后自动重开并续跑
+        public string OverrideScript;  // Script.js 中本程序段：ok / repaired / error
+        public string OverrideNote;    // 最近一次自动修复或修复失败的说明
+        public bool OverrideRuntime;   // Clash 运行配置已套用当前脚本
     }
 
     public class GuardEngine
@@ -394,7 +397,7 @@ namespace ClaudeVPNGuard
                     s.LanDisplay = r.LanDisplay;
                     s.CoreOk = r.Items.Any(i => i.Id == "core" && i.Ok);
                     foreach (var i in r.Items)
-                        s.Checks.Add(new Dictionary<string, object> { { "name", i.Name }, { "ok", i.Ok }, { "critical", i.Critical }, { "detail", i.Detail } });
+                        s.Checks.Add(new Dictionary<string, object> { { "id", i.Id }, { "name", i.Name }, { "ok", i.Ok }, { "critical", i.Critical }, { "detail", i.Detail } });
                 }
                 return s;
             }

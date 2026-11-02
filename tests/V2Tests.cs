@@ -152,6 +152,40 @@ namespace ClaudeVPNGuard
                 check("覆写脚本：Japan Auto 引用汇总 provider，且不含 DIRECT", js.Contains("use: [CVG.provider]") && js.Contains("type: \"file\"") && !js.Contains("\"DIRECT\""), null);
             }
 
+            Console.WriteLine("自动套用覆写到 Clash 运行配置（订阅更新后免手动刷新）");
+            {
+                // 仿 Clash Verge 生成的 clash-verge.yaml：块写法、列表短横线顶格、没有 listeners/proxy-providers
+                var rt = "mixed-port: 17990\r\nallow-lan: false\r\nmode: rule\r\nlog-level: warning\r\nproxies:\r\n- name: \"Japan-1\"\r\n  type: socks5\r\n  server: 127.0.0.1\r\n  port: 9\r\nproxy-groups:\r\n- name: 节点选择\r\n  type: select\r\n  proxies:\r\n  - Japan-1\r\n  - DIRECT\r\nrule-providers:\r\n  demo:\r\n    type: inline\r\n    behavior: domain\r\n    payload:\r\n    - example.com\r\nrules:\r\n- RULE-SET,demo,DIRECT\r\n- MATCH,节点选择\r\n";
+                var p = VergeOverride.PatchRuntimeYaml(rt, st);
+                check("套用后含专用入口、Japan Auto 组、汇总 provider", p != null && p.Contains(VergeOverride.ListenerName) && p.Contains("\"" + st.JapanGroupName + "\"") && p.Contains("\"" + Subscriptions.ProviderName + "\": {type: file"), null);
+                var ls = p.Replace("\r", "").Split('\n').ToList();
+                int ri = ls.IndexOf("rules:");
+                check("Claude 规则插在规则最前，原规则顺序不变", ri >= 0 && ls[ri + 1].Contains("PROCESS-NAME-REGEX") && p.IndexOf("- RULE-SET,demo,DIRECT") < p.IndexOf("- MATCH,节点选择") && p.IndexOf("DOMAIN-SUFFIX,claude.ai") < p.IndexOf("- RULE-SET,demo"), null);
+                check("原有组/节点/规则行全部保留", rt.Replace("\r", "").Split('\n').Where(l => l != "").All(l => ls.Contains(l)), null);
+                check("已含专用入口时不重复套用", VergeOverride.PatchRuntimeYaml(p, st) == null, null);
+                check("保持 CRLF 换行", !p.Replace("\r\n", "").Contains("\n"), null);
+                bool threw = false;
+                try { VergeOverride.PatchRuntimeYaml(rt.Replace("rules:\r\n- RULE-SET,demo,DIRECT\r\n- MATCH,节点选择\r\n", "rules: [MATCH,DIRECT]\r\n"), st); } catch (InvalidOperationException) { threw = true; }
+                check("行内写法不认识 → 拒绝自动套用（改为提示手动刷新）", threw, null);
+                var p2 = VergeOverride.PatchRuntimeYaml(rt + "listeners: []\r\nproxy-providers: {}\r\n", st);
+                check("空的 listeners: [] / proxy-providers: {} 也能套用", p2 != null && !p2.Contains("listeners: []") && !p2.Contains("proxy-providers: {}") && p2.Contains(VergeOverride.ListenerName), null);
+
+                // 真实内核校验：Clash Verge 自带的 verge-mihomo 能否解析套用后的配置
+                var bin = MihomoInstance.FindBinary();
+                if (bin != null)
+                {
+                    var wd = Path.Combine(tmp, "hotload-" + Guid.NewGuid().ToString("N").Substring(0, 6));
+                    Directory.CreateDirectory(wd);
+                    File.WriteAllText(Path.Combine(wd, Subscriptions.ProviderFile), "proxies:\n- {name: \"[A] Japan-1\", type: socks5, server: 127.0.0.1, port: 9}\n", new UTF8Encoding(false));
+                    File.WriteAllText(Path.Combine(wd, "cfg.yaml"), p, new UTF8Encoding(false));
+                    var psi = new System.Diagnostics.ProcessStartInfo(bin, "-t -d \"" + wd + "\" -f \"" + Path.Combine(wd, "cfg.yaml") + "\"") { UseShellExecute = false, CreateNoWindow = true, RedirectStandardOutput = true, RedirectStandardError = true };
+                    string outp; int code;
+                    using (var pr = System.Diagnostics.Process.Start(psi)) { outp = pr.StandardOutput.ReadToEnd() + pr.StandardError.ReadToEnd(); pr.WaitForExit(20000); code = pr.ExitCode; }
+                    check("真实 Mihomo 内核能解析套用后的配置（-t 校验）", code == 0, outp.Trim().Split('\n').LastOrDefault());
+                }
+                else Console.WriteLine("  [跳过] 未找到 verge-mihomo.exe，跳过真实内核解析校验");
+            }
+
             Console.WriteLine("会话快照与待恢复清单");
             var cap = SessionSnapshot.Capture();
             check("真实系统：识别正在运行的 Claude Code 会话（只读）", cap.Count > 0 && cap.All(x => x.LocalId != null && x.LocalId.StartsWith("local_")), string.Join(" | ", cap.Select(x => x.LocalId + " " + x.Title + (x.Busy ? " [执行中]" : ""))));

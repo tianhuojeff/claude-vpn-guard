@@ -51,7 +51,7 @@ namespace ClaudeVPNGuard
         public MainForm(bool tray)
         {
             startHidden = tray;
-            Text = "Claude VPN Guard — Claude 代理防泄漏保护";
+            Text = "Claude VPN Guard v" + GuardVersion.Text + " — Claude 代理防泄漏保护";
             Font = new Font("Microsoft YaHei UI", 9F);
             Size = new Size(820, 760);
             MinimumSize = new Size(640, 560);
@@ -88,6 +88,7 @@ namespace ClaudeVPNGuard
             AddButton(buttons, "查看日志", ShowLogs, false);
             AddButton(buttons, "设置", ShowSettings, false);
             AddButton(buttons, "修复保护", Repair, false);
+            AddButton(buttons, "修复 Clash 覆写", FixOverride, false);
             AddButton(buttons, "安全卸载", Uninstall, false);
 
             var mid = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2, RowCount = 2, Padding = new Padding(12) };
@@ -245,6 +246,7 @@ namespace ClaudeVPNGuard
             else if (lastState != null && lastState != "Protected" && lastState != "ServiceDown" && state == "Protected")
                 tray.ShowBalloonTip(4000, "保护已恢复", "代理验证通过。如需使用 Claude，请手动启动。", ToolTipIcon.Info);
             lastTripSeq = seq;
+            CheckOverrideAlert(s);
             // 保护性关闭后代理恢复：自动重开 Claude 并续跑被中断的会话
             AutoResume.Maybe(s, (t, m, i) => { try { BeginInvoke(new Action(() => tray.ShowBalloonTip(8000, t, m, i))); } catch { } });
             var rid = Json.Str(s, "ResumeId");
@@ -259,13 +261,92 @@ namespace ClaudeVPNGuard
             {
                 var d = VergeOverride.FindVergeDataDir();
                 if (d == null) return "未找到 Clash Verge";
-                var f = System.IO.Path.Combine(d, "profiles", "Script.js");
+                var f = VergeOverride.ScriptFile(d);
                 bool written = System.IO.File.Exists(f) && System.IO.File.ReadAllText(f).Contains(VergeOverride.BeginMark);
-                if (!written) return "未写入";
-                bool live = Native.TcpTable().Any(t => t.State == 2 && t.LocalPort == 17897);
-                return live ? "已写入，已生效（专用入口在线）" : "已写入，未生效（需在 Clash Verge 刷新）";
+                if (!written) return "全局扩展脚本里没有本程序段 ⚠";
+                return VergeOverride.RuntimeLoaded(d) ? "已写入，Clash 已套用" : "已写入，Clash 未刷新 ⚠";
             }
             catch (Exception ex) { return "无法读取：" + ex.Message; }
+        }
+
+        // 覆写缺失/未套用时弹窗说清楚缺什么、去哪看、怎么修（同一问题只弹一次，恢复后复位）
+        string overrideAlertKey;
+        bool overrideDialogOpen;
+        DateTime overrideProblemSince = DateTime.MinValue;
+        void CheckOverrideAlert(object s)
+        {
+            var script = Json.Str(s, "OverrideScript");
+            if (script == null) return; // 非隔离模式，或本次数据不含覆写状态
+            bool core = Json.Bool(s, "CoreOk"), groupMissing = false, listenerDown = false;
+            foreach (var ci in Json.Arr(s, "Checks"))
+            {
+                if (Json.Bool(ci, "ok")) continue;
+                var id = Json.Str(ci, "id");
+                if (id == "jpgroup" && (Json.Str(ci, "detail") ?? "").StartsWith("不存在")) groupMissing = true;
+                if (id == "listener" && core) listenerDown = true;
+            }
+            bool stale = core && !Json.Bool(s, "OverrideRuntime");
+            var note = Json.Str(s, "OverrideNote");
+            var problems = new List<string>();
+            if (groupMissing) problems.Add("Clash 里找不到 Japan Auto 组");
+            if (listenerDown) problems.Add("专用入口 127.0.0.1:17897 没有在监听");
+            if (script == "error") problems.Add(note);
+            else if (script == "repaired" && stale) problems.Add(note + "，Clash 还没刷新");
+            else if (stale) problems.Add("全局扩展脚本已改，但 Clash 当前配置还没套用；下次更新订阅前 Japan Auto 可能消失");
+            if (problems.Count == 0) { overrideAlertKey = null; overrideProblemSince = DateTime.MinValue; return; }
+            // 服务会在几秒内自动补写并套用；问题持续 15 秒还在才打扰用户
+            if (overrideProblemSince == DateTime.MinValue) overrideProblemSince = DateTime.Now;
+            if ((DateTime.Now - overrideProblemSince).TotalSeconds < 15) return;
+            var key = string.Join("|", problems);
+            if (key == overrideAlertKey || overrideDialogOpen) return;
+            overrideAlertKey = key;
+            overrideDialogOpen = true;
+            tray.ShowBalloonTip(8000, "Clash 覆写需要处理", problems[0], ToolTipIcon.Warning);
+            BeginInvoke(new Action(() =>
+            {
+                var r = MessageBox.Show("检测到 Clash 覆写问题：\n\n• " + string.Join("\n• ", problems) + "\n\n" + VergeOverride.WhereGuide +
+                    "\n保护器每 3 秒检查这段脚本，缺了会自动补写（先备份原文件）并自动套用到 Clash；这次自动处理没有成功（原因见上），需要手动刷新。\n\n" + VergeOverride.RefreshGuide +
+                    "\n\n【是】打开 Clash Verge　【否】稍后处理", "Clash 覆写需要处理", MessageBoxButtons.YesNo, MessageBoxIcon.Warning);
+                overrideDialogOpen = false;
+                if (r == DialogResult.Yes) OpenClashVerge();
+            }));
+        }
+
+        // 手动补写 Clash Verge 全局扩展脚本（用户自己的配置，无需管理员；先备份）
+        void FixOverride()
+        {
+            try
+            {
+                var d = VergeOverride.FindVergeDataDir();
+                if (d == null) { MessageBox.Show("未找到 Clash Verge 数据目录。", "修复 Clash 覆写"); return; }
+                GuardSettings st = null;
+                try { st = Json.Deserialize<GuardSettings>(Json.Serialize(IpcClient.Call("getsettings", null, 1500))); } catch { }
+                if (st == null) st = GuardSettings.Load();
+                var bak = VergeOverride.Ensure(d, st);
+                var head = bak == null ? "全局扩展脚本里的本程序段完整，无需补写。" : "已重新写入全局扩展脚本（原文件备份：" + bak + "）。";
+                string tail;
+                if (VergeOverride.RuntimeLoaded(d)) tail = "Clash 当前配置也已套用，无需刷新。";
+                else
+                {
+                    try
+                    {
+                        string diag;
+                        var cl = MihomoClient.Discover(st, out diag);
+                        if (cl == null) throw new InvalidOperationException("Clash 内核不可用：" + diag);
+                        VergeOverride.HotLoad(d, st, cl);
+                        tail = "已自动把覆写套用到 Clash 当前配置并重载内核，无需手动刷新。";
+                    }
+                    catch (Exception ex) { tail = "自动套用失败：" + ex.Message + "\n\n" + VergeOverride.RefreshGuide; }
+                }
+                if (tail.StartsWith("自动套用失败"))
+                {
+                    if (MessageBox.Show(head + "\n\n" + VergeOverride.WhereGuide + "\n\n" + tail + "\n\n现在打开 Clash Verge？", "修复 Clash 覆写", MessageBoxButtons.YesNo, MessageBoxIcon.Warning) == DialogResult.Yes) OpenClashVerge();
+                }
+                else MessageBox.Show(head + "\n\n" + VergeOverride.WhereGuide + "\n\n" + tail, "修复 Clash 覆写", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                overrideAlertKey = null;
+                Poll(false);
+            }
+            catch (Exception ex) { MessageBox.Show("补写失败：" + ex.Message + "\n\n" + VergeOverride.WhereGuide, "修复 Clash 覆写"); }
         }
 
         void SetState(string text, Color c, string sub)
@@ -313,7 +394,8 @@ namespace ClaudeVPNGuard
                     if (err != null)
                     {
                         Poll(false);
-                        var r = MessageBox.Show("启动前安全检测未通过，已禁止 Claude 联网：\n\n" + err + "\n\n是否打开 Clash Verge？", "无法启动 Claude", MessageBoxButtons.YesNo, MessageBoxIcon.Warning);
+                        var hint = err.Contains("Japan Auto") || err.Contains("专用入口") ? "\n\n" + VergeOverride.WhereGuide + "\n" + VergeOverride.RefreshGuide : "";
+                        var r = MessageBox.Show("启动前安全检测未通过，已禁止 Claude 联网：\n\n" + err + hint + "\n\n是否打开 Clash Verge？", "无法启动 Claude", MessageBoxButtons.YesNo, MessageBoxIcon.Warning);
                         if (r == DialogResult.Yes) OpenClashVerge();
                         return;
                     }

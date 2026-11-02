@@ -8,7 +8,9 @@ written_by: claude-code
 
 *A per-application network kill switch for the Claude desktop app on Windows. It uses persistent WFP filters and firewall rules so Claude can only reach a dedicated Mihomo (Clash) listener. When the proxy breaks, Claude is blocked first and closed second; it never falls back to a direct connection.*
 
-![platform](https://img.shields.io/badge/platform-Windows%2010%2F11-0078d4) ![runtime](https://img.shields.io/badge/.NET%20Framework-4.8-512bd4) ![license](https://img.shields.io/badge/license-MIT-green)
+![platform](https://img.shields.io/badge/platform-Windows%2010%2F11-0078d4) ![runtime](https://img.shields.io/badge/.NET%20Framework-4.8-512bd4) ![license](https://img.shields.io/badge/license-MIT-green) ![version](https://img.shields.io/badge/version-2.3.0-blue)
+
+当前版本：**2.3.0**（2026-11-02）。各版本改动见 [CHANGELOG.md](CHANGELOG.md)。
 
 ---
 
@@ -50,13 +52,14 @@ flowchart LR
 | **检测 + 保护性关闭** | 每 2 秒检查 Mihomo 的模式、出站链和 Claude 的真实连接；每 60 秒经代理做一次 TLS 真实探测，并核对出口国家。内核退出靠进程句柄等待发现，实测约 10 ms。 |
 | **节点故障转移** | 多路存活探测，并行预检候选节点，验证出口国家与实际路径。目标地区节点全部失败时锁网并关闭 Claude，**绝不**换到其他国家或直连。 |
 | **事务性安装 / 完整卸载** | 安装失败自动回滚。`full-uninstall.ps1` 只用系统 PowerShell 即可删除全部 WFP 过滤器与规则，不依赖本程序的 exe 能否运行。 |
+| **覆写自愈** | 订阅定时更新后若 Clash 配置丢了专用入口，服务自动补写全局扩展脚本，并对运行配置做相同改动后让内核重载，不用手动刷新。期间 Claude 始终处于阻断状态。 |
 | **GUI** | 托盘常驻，包括状态总览、节点管理和参数设置，可「启动 Claude」（带专用代理参数）。另有 5 步安装与验收向导。 |
 
 ## 验证情况
 
 以下都在真实 Windows 11 + Clash Verge Rev 环境里跑过（详见 [docs/V2整合清单.md](docs/V2整合清单.md)）：
 
-- 单元测试与故障注入实验台：101 项通过。
+- 单元测试与故障注入实验台：109 项通过（含真实 Mihomo 内核解析校验）。
 - WFP 实测 `selftest`：31 项通过、0 失败。覆盖回环端口隔离、IPv4/IPv6、UDP/DNS、借道局域网，以及崩溃后的持久性。
 - 场景验收：关闭系统代理、切换节点、内核崩溃（39 ms 发现，约 1.1 s 完成关闭 Claude）、真实环境下自动换节点，全部通过。
 - 防火墙审计：每个过滤器都带程序条件，不改系统默认策略，不影响局域网与其他程序。
@@ -113,8 +116,9 @@ docs          设计说明、安全限制、各项测试报告
 ## 路线图
 
 - [x] 桌面端（Windows）：WFP 隔离 + 专用入口 + 故障转移
+- [x] 订阅定时更新后自动补写并套用覆写，免手动刷新（2.3.0）
 - [ ] 代码签名，兼容智能应用控制
-- [ ] 多订阅聚合目标地区节点
+- [x] 多订阅聚合目标地区节点（2.1.0）
 - [ ] 手机端（Android / FlClash）：不 root，按应用断网
 
 ## 声明

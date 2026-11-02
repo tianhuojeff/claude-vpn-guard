@@ -64,6 +64,10 @@ namespace ClaudeVPNGuard
         volatile bool stop, fullRequested = true;
         DateTime envChangedAt = DateTime.MinValue;
         Thread loop;
+        ServiceNotifier notifier;
+        string overrideScript = "ok", overrideNote;
+        bool overrideRuntime = true;
+        DateTime lastOverrideError = DateTime.MinValue;
 
         public void Start()
         {
@@ -72,7 +76,7 @@ namespace ClaudeVPNGuard
             Log.Cleanup();
             Loc = new ClaudeLocator(St);
             Fw = BuildFirewall(St);
-            var notifier = new ServiceNotifier();
+            notifier = new ServiceNotifier();
             Health = new HealthChecker(St, Loc, Fw);
             Engine = new GuardEngine(St, Fw, Health, new ClaudeControl(Loc), notifier);
             Engine.RequestRecheck = () => { fullRequested = true; wake.Set(); };
@@ -134,13 +138,74 @@ namespace ClaudeVPNGuard
             while (!stop)
             {
                 // 每 3 秒检查订阅变化（只比对文件时间，变化时才重写汇总文件并热刷新）
-                if (n++ % 3 == 0) { try { Subs.Tick(); } catch (Exception ex) { Subs.LastError = ex.Message; } }
+                if (n++ % 3 == 0)
+                {
+                    try { Subs.Tick(); } catch (Exception ex) { Subs.LastError = ex.Message; }
+                    EnsureOverride();
+                }
                 try
                 {
                     if (Health.Client != null) Nodes.Tick();
                 }
                 catch (Exception ex) { Log.Error("节点管理异常：" + ex.Message); }
                 Thread.Sleep(1000);
+            }
+        }
+
+        // 隔离模式依赖 Clash Verge 全局扩展脚本里的本程序段：被删除/改坏（卸载残留、手动编辑、Verge 重置）就立即补写（先备份），
+        // 并提醒用户在 Clash Verge 刷新——Clash 只在刷新/更新订阅时重新生成配置，补写后不刷新，下次订阅更新 Japan Auto 就会消失
+        void EnsureOverride()
+        {
+            if (!St.IsolationMode) return;
+            var vd = Subs.VergeDir ?? Subscriptions.FindVergeDir();
+            if (vd == null) return;
+            try
+            {
+                var bak = VergeOverride.Ensure(vd, St);
+                if (bak != null)
+                {
+                    overrideScript = "repaired";
+                    overrideNote = DateTime.Now.ToString("HH:mm") + " 发现全局扩展脚本里本程序的覆写段缺失，已自动重新写入（原文件备份：" + bak + "）";
+                    Log.Action(overrideNote);
+                }
+                else if (overrideScript == "error") overrideScript = "ok";
+                overrideRuntime = VergeOverride.RuntimeLoaded(vd);
+                if (!overrideRuntime) TryHotLoad(vd, bak != null);
+            }
+            catch (Exception ex)
+            {
+                overrideScript = "error";
+                overrideNote = "全局扩展脚本缺少本程序段，且自动补写失败：" + ex.Message;
+                if ((DateTime.Now - lastOverrideError).TotalMinutes < 10) return;
+                lastOverrideError = DateTime.Now;
+                Log.Error(overrideNote);
+                notifier.Notify("Clash 覆写缺失，无法自动补写", overrideNote + "\n\n" + VergeOverride.WhereGuide + "\n可在保护器“设置”旁点“修复 Clash 覆写”，或用管理员运行 ClaudeVPNGuard.Service.exe verge-apply。");
+            }
+        }
+
+        // Clash 当前配置没套用覆写（脚本刚补写、Verge 尚未重新生成）：自己套用并重载内核，不用用户去 Verge 刷新。
+        // 失败才提醒手动刷新；每 2 分钟最多尝试一次，避免反复重载打断 Clash 连接
+        DateTime lastHotLoad = DateTime.MinValue;
+        void TryHotLoad(string vd, bool justRepaired)
+        {
+            if ((DateTime.Now - lastHotLoad).TotalMinutes < 2) return;
+            var c = Health.Client;
+            if (c == null) return;   // 内核没连上：等它起来再说（Verge 启动时会自己执行脚本）
+            lastHotLoad = DateTime.Now;
+            try
+            {
+                if (!VergeOverride.HotLoad(vd, St, c)) return;
+                overrideRuntime = VergeOverride.RuntimeLoaded(vd);
+                overrideNote = DateTime.Now.ToString("HH:mm") + " Clash 当前配置缺少本程序覆写，已自动套用并重载内核" + (justRepaired ? "（全局扩展脚本也已补写）" : "");
+                Subs.ForceNext();
+                fullRequested = true; wake.Set();
+                notifier.Notify("Clash 覆写已自动恢复", overrideNote + "。无需手动刷新 Clash Verge。");
+            }
+            catch (Exception ex)
+            {
+                overrideNote = "Clash 当前配置缺少本程序覆写，自动套用失败：" + ex.Message;
+                Log.Error(overrideNote);
+                notifier.Notify("Clash 覆写需要手动刷新", overrideNote + "\n\n" + VergeOverride.RefreshGuide);
             }
         }
 
@@ -237,6 +302,9 @@ namespace ClaudeVPNGuard
                         var plan = SessionSnapshot.ReadPending();
                         snap.AutoResume = St.AutoResumeAfterRecovery;
                         if (plan != null && plan.Status == "pending") { snap.ResumeId = plan.Id; snap.ResumeSessions = plan.Sessions.Count; }
+                        snap.OverrideScript = St.IsolationMode ? overrideScript : null;
+                        snap.OverrideNote = overrideNote;
+                        snap.OverrideRuntime = overrideRuntime;
                         return new IpcResponse { Ok = true, Data = snap };
                     }
                 case "resume-plan":
@@ -473,8 +541,27 @@ namespace ClaudeVPNGuard
                     case "preflight":
                     case "audit": return Audit.Run(args);
                     case "verify": return Admin(Verify);
+                    case "version": Console.WriteLine("Claude VPN Guard " + GuardVersion.Text); return 0;
                     case "verge-apply": return VergeApply(true);
                     case "verge-remove": return VergeApply(false);
+                    case "verge-hotload":
+                        {
+                            Console.OutputEncoding = Encoding.UTF8;
+                            var vd = VergeOverride.FindVergeDataDir();
+                            if (vd == null) { Console.WriteLine("未找到 Clash Verge 数据目录"); return 2; }
+                            var st2 = GuardSettings.Load();
+                            string d;
+                            var cl = MihomoClient.Discover(st2, out d);
+                            if (cl == null) { Console.WriteLine("Clash 内核不可用：" + d); return 2; }
+                            try
+                            {
+                                // 汇总文件先就位，否则内核加载 provider 失败
+                                new SubscriptionSync(st2, () => cl).Tick();
+                                Console.WriteLine(VergeOverride.HotLoad(vd, st2, cl) ? "已自动套用覆写并重载 Clash 内核" : "Clash 当前配置已含本程序覆写，无需重载");
+                                return 0;
+                            }
+                            catch (Exception ex) { Console.WriteLine("自动套用失败：" + ex.Message); return 1; }
+                        }
                     case "verge-diff":
                         {
                             Console.OutputEncoding = Encoding.UTF8;
@@ -592,6 +679,11 @@ namespace ClaudeVPNGuard
             return 0;
         }
 
+        static bool ServiceRunning()
+        {
+            try { using (var sc = new ServiceController(GuardPaths.ServiceName)) return sc.Status == ServiceControllerStatus.Running; } catch { return false; }
+        }
+
         // 安装脚本用：服务运行 + 规则/过滤器完整
         static int Verify()
         {
@@ -620,6 +712,8 @@ namespace ClaudeVPNGuard
             {
                 VergeOverride.Remove(dir);
                 Console.WriteLine("已移除覆写段。请在 Clash Verge 中刷新配置。");
+                if (st.IsolationMode && ServiceRunning())
+                    Console.WriteLine("注意：保护服务正在运行（隔离模式），会在几秒内自动补写覆写段。要彻底移除请先卸载（scripts\\full-uninstall.ps1）。");
             }
             return 0;
         }

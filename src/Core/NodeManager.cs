@@ -188,7 +188,7 @@ namespace ClaudeVPNGuard
             if (m == null)
             {
                 Status = NodeStatus.GroupMissing;
-                if (OnSecurityFault != null) OnSecurityFault("Clash 中不存在 " + st.JapanGroupName + " 组（覆写脚本未生效？）");
+                if (OnSecurityFault != null) OnSecurityFault("Clash 中不存在 " + st.JapanGroupName + " 组（覆写未套用：全局扩展脚本缺少本程序段，或改写后 Clash 尚未刷新）");
                 security = true;
                 return new List<string>();
             }
