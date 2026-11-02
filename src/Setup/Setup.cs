@@ -253,7 +253,9 @@ namespace ClaudeVPNGuard
                     bool go = UiWait(() => Confirm("写入 Clash 覆写", "Clash Verge「全局扩展脚本」(Script.js) 里没有本程序段（或与当前设置不一致）。\n\n将写入：Japan Auto 组 + 专用入口 127.0.0.1:17897 + Claude 规则；不改其他组/节点/规则。写入前自动备份原文件。\n\n" + VergeOverride.WhereGuide));
                     if (!go) { State(3, "未写入覆写", Color.DarkOrange); Rec("- 用户取消写入覆写"); return; }
                     Run(Svc(), "verge-apply", out o);
-                    Rec("- " + o.Trim());
+                    // verge-apply 命令行输出带「请在 Clash Verge 中刷新」；Setup 接下来会自动套用，失败才弹窗让用户刷新，记录里去掉这句免得误导
+                    var ao = o.Trim(); int cut = ao.IndexOf("请在 Clash Verge 中刷新");
+                    Rec("- " + (cut > 0 ? ao.Substring(0, cut).TrimEnd() : ao));
                 }
                 Run(Svc(), "verge-diff", out o);
                 listenerOk = ListenerUp() && VergeOverride.RuntimeLoaded(vd);

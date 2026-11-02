@@ -135,7 +135,7 @@ namespace ClaudeVPNGuard
                     Item("提示", "模式 / 端口", Json.Str(cfg, "mode") + "，mixed-port " + Json.Int(cfg, "mixed-port", 0) + "，TUN " + (Json.Bool(Json.Get(cfg, "tun"), "enable") ? "开" : "关") + "，allow-lan " + Json.Bool(cfg, "allow-lan"));
                     var nm = new NodeManager(new MihomoNodeApi(() => cl, st), st, null);
                     var groupTypes = new[] { "Selector", "URLTest", "Fallback", "LoadBalance", "Relay" };
-                    var jp = cl.Proxies().Where(kv => !groupTypes.Contains(kv.Value.Type)).Select(kv => kv.Key).Where(nm.IsJapanName).OrderBy(x => x).ToList();
+                    var jp = cl.Proxies().Where(kv => !groupTypes.Contains(kv.Value.Type)).Select(kv => kv.Key).Where(n => !NodeManager.IsReject(n) && nm.IsJapanName(n)).OrderBy(x => x).ToList();
                     Item(jp.Count > 0 ? "正常" : "阻止", "识别到的日本节点", jp.Count + " 个：" + string.Join("、", jp));
                     var mem = new MihomoNodeApi(() => cl, st).GroupMembers(st.JapanGroupName);
                     Item(mem != null ? "正常" : "提示", st.JapanGroupName + " 组", mem == null ? "不存在（应用覆写并在 Clash Verge 刷新后出现）" : string.Join("、", mem));

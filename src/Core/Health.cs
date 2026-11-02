@@ -205,11 +205,12 @@ namespace ClaudeVPNGuard
                 var now = api.GroupNow(st.JapanGroupName);
                 r.JapanNode = now;
                 r.Node = now; // 隔离模式下 Claude 实际使用的是 Japan Auto 的当前节点
+                // 计数不含 REJECT 和汇总文件的占位节点 cvg-placeholder（它不是真实节点）
                 bool ok = bad.Count == 0 && now != null && !NodeManager.IsReject(now) && nm.IsJapanName(now);
                 r.Add("jpgroup", st.JapanGroupName + " 组", ok, true,
                     bad.Count > 0 ? "组内出现非日本节点：" + string.Join("、", bad.Take(3)) :
                     NodeManager.IsReject(now) || members.All(n => NodeManager.IsReject(n)) ? "没有可用日本节点（组内仅 REJECT）" :
-                    "当前 " + now + "，共 " + members.Count + " 个日本节点，无 DIRECT/其他国家");
+                    "当前 " + now + "，共 " + members.Count(n => !NodeManager.IsReject(n)) + " 个日本节点，无 DIRECT/其他国家");
             }
             bool open = false;
             try
