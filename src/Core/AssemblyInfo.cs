@@ -15,7 +15,7 @@ namespace ClaudeVPNGuard
     // 版本号唯一来源；每次发布同步更新 CHANGELOG.md
     public static class GuardVersion
     {
-        public const string Text = "2.3.0";
+        public const string Text = "2.3.1";
         public const string Full = Text + ".0";
     }
 }

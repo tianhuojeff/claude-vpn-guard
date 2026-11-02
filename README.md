@@ -8,9 +8,9 @@ written_by: claude-code
 
 *A per-application network kill switch for the Claude desktop app on Windows. It uses persistent WFP filters and firewall rules so Claude can only reach a dedicated Mihomo (Clash) listener. When the proxy breaks, Claude is blocked first and closed second; it never falls back to a direct connection.*
 
-![platform](https://img.shields.io/badge/platform-Windows%2010%2F11-0078d4) ![runtime](https://img.shields.io/badge/.NET%20Framework-4.8-512bd4) ![license](https://img.shields.io/badge/license-MIT-green) ![version](https://img.shields.io/badge/version-2.3.0-blue)
+![platform](https://img.shields.io/badge/platform-Windows%2010%2F11-0078d4) ![runtime](https://img.shields.io/badge/.NET%20Framework-4.8-512bd4) ![license](https://img.shields.io/badge/license-MIT-green) ![version](https://img.shields.io/badge/version-2.3.1-blue)
 
-当前版本：**2.3.0**（2026-11-02）。各版本改动见 [CHANGELOG.md](CHANGELOG.md)。
+当前版本：**2.3.1**（2026-11-02）。各版本改动见 [CHANGELOG.md](CHANGELOG.md)。
 
 ---
 

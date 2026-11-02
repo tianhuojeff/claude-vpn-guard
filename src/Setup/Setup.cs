@@ -104,6 +104,8 @@ namespace ClaudeVPNGuard
         void State(int n, string text, Color c) { Ui(() => { stateLbl[n].Text = text; stateLbl[n].ForeColor = c; }); }
         void Enable(int n) { Ui(() => stepBtn[n].Enabled = true); }
         void Ui(Action a) { if (InvokeRequired) BeginInvoke(a); else a(); }
+        // 需要等用户回答的对话框必须用这个：Ui() 是异步的，后台线程不会等结果（11-02 第 3 步点「确定」无反应即因此）
+        T UiWait<T>(Func<T> f) { return InvokeRequired ? (T)Invoke(f) : f(); }
         void Line(string s) { Ui(() => { log.AppendText(s + "\r\n"); }); }
         void Rec(string s) { lock (rec) rec.AppendLine(s); }
 
@@ -248,8 +250,7 @@ namespace ClaudeVPNGuard
                 var sf = VergeOverride.ScriptFile(vd);
                 if (!(File.Exists(sf) && VergeOverride.HasCurrentBlock(File.ReadAllText(sf, Encoding.UTF8), GuardSettings.Load())))
                 {
-                    bool go = false;
-                    Ui(() => go = Confirm("写入 Clash 覆写", "Clash Verge「全局扩展脚本」(Script.js) 里没有本程序段（或与当前设置不一致）。\n\n将写入：Japan Auto 组 + 专用入口 127.0.0.1:17897 + Claude 规则；不改其他组/节点/规则。写入前自动备份原文件。\n\n" + VergeOverride.WhereGuide));
+                    bool go = UiWait(() => Confirm("写入 Clash 覆写", "Clash Verge「全局扩展脚本」(Script.js) 里没有本程序段（或与当前设置不一致）。\n\n将写入：Japan Auto 组 + 专用入口 127.0.0.1:17897 + Claude 规则；不改其他组/节点/规则。写入前自动备份原文件。\n\n" + VergeOverride.WhereGuide));
                     if (!go) { State(3, "未写入覆写", Color.DarkOrange); Rec("- 用户取消写入覆写"); return; }
                     Run(Svc(), "verge-apply", out o);
                     Rec("- " + o.Trim());
@@ -265,9 +266,7 @@ namespace ClaudeVPNGuard
                 }
                 while (!listenerOk)
                 {
-                    var r = DialogResult.None;
-                    Ui(() => r = MessageBox.Show(this, "覆写已写入 Script.js（差异见右侧），自动套用也没成功（见右侧记录），Clash Verge 当前配置还没套用它。\n\n" + VergeOverride.RefreshGuide + "\n\n【是】我已刷新，重新检测\n【否】撤销覆写（恢复原 Script.js）并停止\n【取消】稍后再说", "加载 Clash 覆写", MessageBoxButtons.YesNoCancel, MessageBoxIcon.Question));
-                    while (r == DialogResult.None) Thread.Sleep(100);
+                    var r = UiWait(() => MessageBox.Show(this, "覆写已写入 Script.js（差异见右侧），自动套用也没成功（见右侧记录），Clash Verge 当前配置还没套用它。\n\n" + VergeOverride.RefreshGuide + "\n\n【是】我已刷新，重新检测\n【否】撤销覆写（恢复原 Script.js）并停止\n【取消】稍后再说", "加载 Clash 覆写", MessageBoxButtons.YesNoCancel, MessageBoxIcon.Question));
                     if (r == DialogResult.Yes) { Thread.Sleep(1500); listenerOk = ListenerUp() && VergeOverride.RuntimeLoaded(vd); continue; }
                     if (r == DialogResult.No) { Run(Svc(), "verge-restore", out o); Rec("- 用户撤销覆写：" + o.Trim()); }
                     State(3, "覆写未生效，已停止", Color.DarkOrange);

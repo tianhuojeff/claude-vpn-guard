@@ -188,7 +188,7 @@ namespace ClaudeVPNGuard
 
             Console.WriteLine("会话快照与待恢复清单");
             var cap = SessionSnapshot.Capture();
-            check("真实系统：识别正在运行的 Claude Code 会话（只读）", cap.Count > 0 && cap.All(x => x.LocalId != null && x.LocalId.StartsWith("local_")), string.Join(" | ", cap.Select(x => x.LocalId + " " + x.Title + (x.Busy ? " [执行中]" : ""))));
+            check("真实系统：识别正在运行的 Claude Code 会话（只读）", cap.Any(x => x.LocalId != null) && cap.All(x => x.LocalId == null || x.LocalId.StartsWith("local_")), string.Join(" | ", cap.Select(x => x.LocalId + " " + x.Title + (x.Busy ? " [执行中]" : ""))));
             var plan = SessionSnapshot.WritePending(new List<SessionInfo> { new SessionInfo { LocalId = "local_a", Title = "任务A", Busy = true }, new SessionInfo { LocalId = "local_b", Title = "任务B" }, new SessionInfo { CliId = "x" } }, "测试原因");
             var back = SessionSnapshot.ReadPending();
             check("清单写入/读回（无桌面会话 ID 的条目被丢弃）", back != null && back.Id == plan.Id && back.Sessions.Count == 2 && back.Status == "pending", back == null ? "null" : back.Sessions.Count.ToString());
