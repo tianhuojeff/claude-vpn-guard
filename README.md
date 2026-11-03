@@ -8,9 +8,11 @@ written_by: claude-code
 
 *A per-application network kill switch for the Claude desktop app on Windows. It uses persistent WFP filters and firewall rules so Claude can only reach a dedicated Mihomo (Clash) listener. When the proxy breaks, Claude is blocked first and closed second; it never falls back to a direct connection.*
 
-![platform](https://img.shields.io/badge/platform-Windows%2010%2F11-0078d4) ![runtime](https://img.shields.io/badge/.NET%20Framework-4.8-512bd4) ![license](https://img.shields.io/badge/license-MIT-green) ![version](https://img.shields.io/badge/version-2.3.1-blue)
+![platform](https://img.shields.io/badge/platform-Windows%2010%2F11-0078d4) ![runtime](https://img.shields.io/badge/.NET%20Framework-4.8-512bd4) ![license](https://img.shields.io/badge/license-MIT-green) ![version](https://img.shields.io/badge/version-2.3.2-blue)
 
-当前版本：**2.3.1**（2026-11-02）。各版本改动见 [CHANGELOG.md](CHANGELOG.md)。
+当前版本：**2.3.2**（2026-11-02）。各版本改动见 [CHANGELOG.md](CHANGELOG.md)。
+
+**手机版（Android）**：网关卫士 0.3.0，APK 在 [Releases](https://github.com/tianhuojeff/claude-vpn-guard/releases/tag/android-v0.3.0)，说明见 [docs/手机版说明.md](docs/手机版说明.md)，源码在 [`android/`](android)。
 
 ---
 
@@ -104,12 +106,14 @@ src/Setup     安装与验收向导
 tests         单元测试 + 真实 Mihomo 内核的故障注入实验台
 scripts       构建、安装、卸载、应急恢复、验收脚本
 docs          设计说明、安全限制、各项测试报告
+android       手机版（网关卫士，Kotlin）
 ```
 
 ## 文档
 
 - [设计说明](docs/设计说明.md)：网络路径分析、TUN 与系统代理对比、架构
 - [已知安全限制](docs/已知安全限制.md)
+- [手机版说明](docs/手机版说明.md)：Android 网关卫士的原理、首次使用、构建和更新日志
 - [V2 整合清单](docs/V2整合清单.md)：每项功能的实现、自动化测试和真实环境验证状态
 - [防火墙审计](docs/防火墙审计报告.md) · [节点切换测试](docs/节点切换测试报告.md) · [故障响应时间](docs/故障响应时间报告.md) · [测试报告](docs/测试报告.md)
 
@@ -119,7 +123,7 @@ docs          设计说明、安全限制、各项测试报告
 - [x] 订阅定时更新后自动补写并套用覆写，免手动刷新（2.3.0）
 - [ ] 代码签名，兼容智能应用控制
 - [x] 多订阅聚合目标地区节点（2.1.0）
-- [ ] 手机端（Android / FlClash）：不 root，按应用断网
+- [x] 手机端（Android / FlClash）：不 root，按应用断网；卫士生成总配置，Claude 只走日本节点（0.3.0）
 
 ## 声明
 

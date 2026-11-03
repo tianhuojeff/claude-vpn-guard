@@ -1,0 +1,5 @@
+<resources>
+    <string name="app_name">网关卫士</string>
+    <string name="blocker_label">网关卫士兜底</string>
+    <string name="blocker_desc">没有 root、Shizuku 也不可用时（例如开机只有流量），出口还没通过检测，就把 Claude 退回桌面，并在系统「应用信息」页自动点「结束运行」，后台也不留。平时只读取前台应用的包名；只在结束应用的几秒里读取系统设置页的按钮，不读取其他应用的界面内容。</string>
+</resources>
