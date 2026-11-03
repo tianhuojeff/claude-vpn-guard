@@ -130,6 +130,15 @@ namespace ClaudeVPNGuard
         [DllImport("kernel32.dll")] static extern uint WaitForSingleObject(IntPtr h, uint ms);
         const uint PROCESS_QUERY_LIMITED_INFORMATION = 0x1000, PROCESS_TERMINATE = 0x1, SYNCHRONIZE = 0x100000;
 
+        [DllImport("kernel32.dll")] static extern bool ProcessIdToSessionId(uint pid, out uint session);
+
+        // 进程所在的登录会话；查不到返回 -1
+        public static int SessionOf(int pid)
+        {
+            uint sid;
+            return ProcessIdToSessionId((uint)pid, out sid) ? (int)sid : -1;
+        }
+
         public static string ProcessPath(int pid)
         {
             var h = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid);

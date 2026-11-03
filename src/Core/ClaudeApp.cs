@@ -117,12 +117,14 @@ namespace ClaudeVPNGuard
         }
 
         // 运行中的 Claude 进程：pid → 路径（路径+签名双重核实，不凭进程名）
-        public Dictionary<int, string> RunningClaude()
+        // session >= 0 时只看该登录会话（界面只关心当前用户自己的 Claude，服务以 SYSTEM 运行能看到所有会话）
+        public Dictionary<int, string> RunningClaude(int session = -1)
         {
             var res = new Dictionary<int, string>();
             foreach (var p in Native.Processes())
             {
                 if (p.Pid <= 4) continue;
+                if (session >= 0 && Native.SessionOf(p.Pid) != session) continue;
                 var path = Native.ProcessPath(p.Pid);
                 if (path != null && IsClaudeExe(path)) res[p.Pid] = path;
             }
@@ -130,13 +132,15 @@ namespace ClaudeVPNGuard
         }
 
         // 结束所有 Claude 进程及其子进程树；返回 (结束数, 残留数)
-        public int[] KillAll()
+        public int[] KillAll() { return KillAll(-1); }
+
+        public int[] KillAll(int session)
         {
             int killed = 0;
             for (int round = 0; round < 3; round++)
             {
                 var procs = Native.Processes();
-                var claude = RunningClaude();
+                var claude = RunningClaude(session);
                 if (claude.Count == 0) return new[] { killed, 0 };
                 var targets = new HashSet<int>(claude.Keys);
                 bool grew = true;
@@ -151,7 +155,7 @@ namespace ClaudeVPNGuard
                 foreach (var pid in order)
                     if (Native.Kill(pid, 1500)) killed++;
             }
-            var left = RunningClaude().Count;
+            var left = RunningClaude(session).Count;
             return new[] { killed, left };
         }
     }

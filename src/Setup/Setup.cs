@@ -390,7 +390,8 @@ namespace ClaudeVPNGuard
             Rec("- 已创建桌面与开始菜单快捷方式，已登记“应用和功能”卸载入口");
             State(4, "已安装（" + (iso ? "隔离模式" : "V1 兼容") + "）", Color.ForestGreen);
             Enable(5);
-            try { Process.Start(Path.Combine(InstallDir, "ClaudeVPNGuard.exe")); } catch { }
+            // 安装程序是管理员权限，界面要以普通权限打开，否则从它启动的 Claude 也是管理员，资源管理器拖放会被拦
+            UserLaunch.StartViaExplorer(Path.Combine(InstallDir, "ClaudeVPNGuard.exe"));
         }
 
         static void Shortcut(string lnk, string target, string args, string desc)

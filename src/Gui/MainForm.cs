@@ -20,6 +20,8 @@ namespace ClaudeVPNGuard
         [STAThread]
         static void Main(string[] args)
         {
+            // 被管理员权限启动时（如安装程序拉起），以普通权限重开自己，避免之后启动的 Claude 也成为管理员进程
+            if (UserLaunch.RelaunchUnelevatedIfNeeded(Application.ExecutablePath)) return;
             bool created;
             using (var mtx = new Mutex(true, "Local\\ClaudeVPNGuard.Gui", out created))
             {
@@ -89,6 +91,7 @@ namespace ClaudeVPNGuard
             AddButton(buttons, "设置", ShowSettings, false);
             AddButton(buttons, "修复保护", Repair, false);
             AddButton(buttons, "修复 Clash 覆写", FixOverride, false);
+            AddButton(buttons, "暂停保护", PauseProtection, false);
             AddButton(buttons, "安全卸载", Uninstall, false);
 
             var mid = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2, RowCount = 2, Padding = new Padding(12) };
@@ -405,14 +408,46 @@ namespace ClaudeVPNGuard
                     {
                         bool iso = false; int port = 17897;
                         try { var nd = IpcClient.Call("nodes", null, 1500); iso = Json.Bool(nd, "Isolation"); port = Json.Int(nd, "DedicatedPort", 17897); } catch { }
-                        if (iso && Json.Int(data, "ClaudeProcesses", 0) > 0)
-                            MessageBox.Show("Claude 已在运行。隔离模式需要由保护器启动 Claude 才能带上专用入口参数，请先完全退出 Claude 再点“启动 Claude”。\n（在此之前 WFP 会阻止它使用通用代理端口，不会直连。）", "Claude VPN Guard");
-                        else if (!string.IsNullOrEmpty(target)) ClaudeLauncher.Launch(target, iso, port);
+                        if (iso && !CloseLeftoverClaude()) return;
+                        if (!string.IsNullOrEmpty(target)) ClaudeLauncher.Launch(target, iso, port);
                         else MessageBox.Show("检测已通过，但未找到 Claude 的启动入口，请从开始菜单启动 Claude。", "Claude VPN Guard");
                     }
                     catch (Exception ex) { MessageBox.Show("启动 Claude 失败：" + ex.Message); }
                 }));
             });
+        }
+
+        // 关掉 Claude 窗口后，Claude 常常还留在托盘或后台（含内置 Claude Code 进程），用户以为已退出。
+        // 只看当前登录会话（服务以 SYSTEM 运行，计数含其他会话，不能直接拿来判断）；
+        // 列出具体进程，经用户确认后结束；界面结束不了的交给服务结束。全部结束返回 true，可以继续启动。
+        bool CloseLeftoverClaude()
+        {
+            int session = Native.SessionOf(Process.GetCurrentProcess().Id);
+            var loc = new ClaudeLocator(new GuardSettings());
+            var running = loc.RunningClaude(session);
+            if (running.Count == 0) return true;
+            var alive = new HashSet<int>(Native.Processes().Select(p => p.Pid));
+            var parents = Native.Processes().ToDictionary(p => p.Pid, p => p.ParentPid);
+            var lines = running.OrderBy(kv => kv.Value, StringComparer.OrdinalIgnoreCase).Take(12).Select(kv =>
+            {
+                bool desktop = kv.Value.ToLowerInvariant().Contains(@"\windowsapps\");
+                int ppid; parents.TryGetValue(kv.Key, out ppid);
+                bool orphan = !desktop && !running.ContainsKey(ppid) && !alive.Contains(ppid);
+                return "· " + (desktop ? "Claude 桌面版" : "Claude Code") + "  " + Path.GetFileName(kv.Value) + "  PID " + kv.Key + (orphan ? "（后台残留，窗口已关）" : "");
+            }).ToList();
+            if (running.Count > 12) lines.Add("…… 共 " + running.Count + " 个");
+            var msg = "Claude 还没有完全退出，下面这些进程还在（任务管理器“详细信息”页能看到同样的 PID）：\n\n"
+                + string.Join("\n", lines) + "\n\n"
+                + "隔离模式必须由保护器重新启动 Claude，才能带上专用入口参数。\n"
+                +"是否现在结束这些进程并重新启动 Claude？未保存的输入会丢失，正在进行的会话会中断。";
+            if (MessageBox.Show(msg, "Claude VPN Guard", MessageBoxButtons.YesNo, MessageBoxIcon.Question) != DialogResult.Yes) return false;
+            var res = loc.KillAll(session);
+            if (res[1] == 0) return true;
+            try { IpcClient.Call("killclaude", new Dictionary<string, object> { { "session", session } }, 15000); } catch { }
+            int left = loc.RunningClaude(session).Count;
+            if (left == 0) return true;
+            MessageBox.Show("还有 " + left + " 个 Claude 进程结束不了。请在任务管理器“详细信息”页结束上面列出的 PID 后再点“启动 Claude”。", "Claude VPN Guard");
+            return false;
         }
 
         void OpenClashVerge()
@@ -564,6 +599,14 @@ namespace ClaudeVPNGuard
         {
             if (MessageBox.Show("将以管理员权限重新注册保护服务并重建 Claude 防火墙规则（重建期间 Claude 网络保持锁定）。继续？", "修复保护", MessageBoxButtons.OKCancel, MessageBoxIcon.Question) != DialogResult.OK) return;
             MessageBox.Show(RunElevated("install") ? "修复完成，保护服务已重新启动。" : "修复未成功，请查看日志。", "修复保护");
+            Poll(true);
+        }
+
+        // 临时关闭保护但不卸载：停服务（改手动启动）并删除防火墙规则/WFP 过滤器；点“修复保护”即可恢复
+        void PauseProtection()
+        {
+            if (MessageBox.Show("将以管理员权限暂停保护：停止保护服务（开机不再自动启动），删除 Claude 的防火墙规则和 WFP 过滤器。\n\n暂停期间 Claude 不受保护，可能不经代理直接联网。\n程序和设置都保留，之后点“修复保护”即可恢复。\n\n继续？", "暂停保护", MessageBoxButtons.OKCancel, MessageBoxIcon.Warning) != DialogResult.OK) return;
+            MessageBox.Show(RunElevated("recover") ? "已暂停保护。Claude 现在不受保护；要恢复请点“修复保护”。" : "暂停未成功，请查看日志。", "暂停保护");
             Poll(true);
         }
 

@@ -330,6 +330,17 @@ namespace ClaudeVPNGuard
                     if (!trusted) return Deny();
                     var err = Engine.PrepareLaunch();
                     return new IpcResponse { Ok = err == null, Error = err, Data = Engine.Snapshot() };
+                case "killclaude":
+                    {
+                        // 界面结束不了的 Claude 进程（如管理员权限启动的）交给服务结束；只结束指定登录会话里的
+                        if (!trusted) return Deny();
+                        int session = -1;
+                        try { session = Convert.ToInt32(req.Args["session"]); } catch { }
+                        if (session < 0) return new IpcResponse { Ok = false, Error = "缺少会话号" };
+                        var r = Loc.KillAll(session);
+                        Log.Action(string.Format("按界面请求结束会话 {0} 的 Claude 进程：结束 {1} 个，残留 {2} 个", session, r[0], r[1]));
+                        return new IpcResponse { Ok = r[1] == 0, Error = r[1] == 0 ? null : "仍有 " + r[1] + " 个 Claude 进程结束不了", Data = new Dictionary<string, object> { { "Killed", r[0] }, { "Left", r[1] } } };
+                    }
                 case "nodes":
                     return new IpcResponse { Ok = true, Data = NodeSnapshot() };
                 case "rescan":
